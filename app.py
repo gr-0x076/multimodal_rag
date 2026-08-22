@@ -200,7 +200,7 @@ def run_streamlit_app():
                 ev_count = len(json.load(f))
         st.write(f"Indexed Evidence Nodes: **{ev_count}**")
 
-        if st.button("🔄 Re-run Ingestion Pipeline", use_container_width=True):
+        if st.button("🔄 Re-run Ingestion Pipeline"):
             with st.spinner("Processing Video, Audio, PDFs & Images..."):
                 ingest_all(data_dir=os.path.join(root_dir, "data"), processed_dir=os.path.join(root_dir, "data", "processed"))
                 st.rerun()
@@ -220,11 +220,11 @@ def run_streamlit_app():
     st.markdown("##### ⚡ Quick Demo Scenarios for Evaluators:")
     col_d1, col_d2, col_d3 = st.columns(3)
     preset_query = ""
-    if col_d1.button("🎯 Demo 1: Golden Redis Query", use_container_width=True):
+    if col_d1.button("🎯 Demo 1: Golden Redis Query"):
         preset_query = GOLDEN_QUERY
-    if col_d2.button("⚡ Demo 2: Peak Bottleneck", use_container_width=True):
+    if col_d2.button("⚡ Demo 2: Peak Bottleneck"):
         preset_query = "What was the primary bottleneck during peak traffic?"
-    if col_d3.button("🛑 Demo 3: Unsupported Refusal", use_container_width=True):
+    if col_d3.button("🛑 Demo 3: Unsupported Refusal"):
         preset_query = "What machine-learning algorithm was used to train Redis caching?"
 
     # Query Input
@@ -305,7 +305,7 @@ def run_streamlit_app():
                             st.markdown(f'<span class="modality-badge mod-video">VIDEO FRAME</span> <small>{ts_fmt} ({ev.timestamp}s)</small>', unsafe_allow_html=True)
                             frame_path = ev.metadata.get("frame_path")
                             if frame_path and os.path.exists(frame_path):
-                                st.image(frame_path, caption=f"Keyframe @ {ts_fmt} ({ev.source})", use_container_width=True)
+                                st.image(frame_path, caption=f"Keyframe @ {ts_fmt} ({ev.source})")
                             st.write(f"_{ev.content}_")
                             if ev.entities:
                                 st.caption(f"🏷️ **Entities:** {', '.join(ev.entities)}")
@@ -319,7 +319,7 @@ def run_streamlit_app():
                             st.markdown(f'<span class="modality-badge mod-image">IMAGE</span>', unsafe_allow_html=True)
                             img_path = os.path.join(root_dir, "data", ev.source)
                             if os.path.exists(img_path):
-                                st.image(img_path, caption=ev.source, use_container_width=True)
+                                st.image(img_path, caption=ev.source)
                             st.write(f"_{ev.content}_")
                             if ev.entities:
                                 st.caption(f"🏷️ **Entities:** {', '.join(ev.entities)}")
@@ -338,7 +338,7 @@ def run_streamlit_app():
                     "Entities": ", ".join(ev.entities),
                     "Connected Edges": ", ".join(ev.relationships)
                 })
-            st.dataframe(graph_data, use_container_width=True)
+            st.dataframe(graph_data)
 
     with st.expander("📂 Explore Raw Dataset Files in Repository"):
         c1, c2, c3 = st.columns(3)
