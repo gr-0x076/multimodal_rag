@@ -14,7 +14,30 @@ root_dir = str(Path(__file__).resolve().parent.parent)
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
-from knowledge.schema import Evidence
+from knowledge.schema import Evidence, GroundedAnswer
+
+
+# ---------------------------------------------------------------------------
+# GroundedAnswer Constructor — Person 2 Contract
+# ---------------------------------------------------------------------------
+
+def build_grounded_answer(
+    query: str,
+    answer_text: str,
+    cited_evidence: List[Evidence],
+    metadata: dict = None,
+) -> GroundedAnswer:
+    """
+    Construct a GroundedAnswer object conforming to Person 2's evaluation contract.
+    """
+    modalities = sorted(list({ev.modality for ev in cited_evidence}))
+    return GroundedAnswer(
+        query=query,
+        answer=answer_text,
+        cited_evidence=cited_evidence,
+        modalities_used=modalities,
+        metadata=metadata or {},
+    )
 
 
 # ---------------------------------------------------------------------------
