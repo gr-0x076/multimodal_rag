@@ -1,0 +1,17 @@
+[
+  {
+    "start": 0.0,
+    "end": 5.0,
+    "text": "Today we're going to discuss our database architecture."
+  },
+  {
+    "start": 5.0,
+    "end": 10.0,
+    "text": "Our main problem is that database load is increasing."
+  },
+  {
+    "start": 10.0,
+    "end": 15.0,
+    "text": "We should consider using Redis caching to reduce database load and latency."
+  }
+]
