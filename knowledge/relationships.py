@@ -46,3 +46,13 @@ def expand_relationships(
             break
             
     return result
+    
+    
+def expand_related(
+    seed_evidence: List[Evidence],
+    all_evidence: List[Evidence],
+    depth: int = 1
+) -> List[Evidence]:
+    """Alias for expand_relationships supporting legacy parameter name (depth -> max_hops)."""
+    return expand_relationships(seed_evidence, all_evidence, max_hops=depth)
+

@@ -16,6 +16,32 @@ def tokenize(text: str) -> set:
     return tokens - STOPWORDS
 
 
+def score_evidence(query: str, all_evidence: List[Evidence]) -> List[Tuple[float, Evidence]]:
+    """
+    Score evidence objects against a query string.
+    Returns list of (score, evidence) tuples sorted by descending score.
+    """
+    if not all_evidence:
+        return []
+        
+    query_tokens = tokenize(query)
+    scored: List[Tuple[float, Evidence]] = []
+    
+    for ev in all_evidence:
+        content_tokens = tokenize(ev.content)
+        entity_tokens = set(e.lower() for e in ev.entities)
+        
+        content_matches = len(query_tokens.intersection(content_tokens))
+        entity_matches = len(query_tokens.intersection(entity_tokens))
+        
+        score = (content_matches * 1.0) + (entity_matches * 2.5)
+        if score > 0:
+            scored.append((score, ev))
+            
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored
+
+
 def search_evidence(
     query: str,
     all_evidence: List[Evidence],
@@ -32,25 +58,28 @@ def search_evidence(
     Returns:
         List[Evidence]: Top-k ranked evidence items based on content & entity relevance.
     """
-    if not all_evidence:
-        return []
-        
-    query_tokens = tokenize(query)
-    scored: List[Tuple[float, Evidence]] = []
-    
-    for ev in all_evidence:
-        content_tokens = tokenize(ev.content)
-        entity_tokens = set(e.lower() for e in ev.entities)
-        
-        content_matches = len(query_tokens.intersection(content_tokens))
-        entity_matches = len(query_tokens.intersection(entity_tokens))
-        
-        # Scoring: Entity matches have higher semantic importance
-        score = (content_matches * 1.0) + (entity_matches * 2.5)
-        
-        if score > 0:
-            scored.append((score, ev))
-            
-    # Sort by relevance score descending
-    scored.sort(key=lambda x: x[0], reverse=True)
+    scored = score_evidence(query, all_evidence)
     return [item[1] for item in scored[:top_k]]
+
+
+def search(query: str, evidence_path: str = None, all_evidence: List[Evidence] = None, top_k: int = 3, expand_depth: int = 0) -> List[Evidence]:
+    """Alias for search_evidence supporting legacy/test calling conventions."""
+    if all_evidence is None:
+        import json
+        import os
+        from pathlib import Path
+        root = str(Path(__file__).resolve().parent.parent)
+        path = evidence_path or os.path.join(root, "data", "processed", "evidence.json")
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            all_evidence = [Evidence(**item) for item in data]
+        else:
+            all_evidence = []
+    
+    seeds = search_evidence(query, all_evidence, top_k=top_k)
+    if expand_depth > 0:
+        from knowledge.relationships import expand_relationships
+        return expand_relationships(seeds, all_evidence, max_hops=expand_depth)
+    return seeds
+
