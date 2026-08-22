@@ -1,4 +1,11 @@
-packaging==26.3
-pillow==12.3.0
-pymupdf==1.28.2
-pytesseract==0.3.13
+packaging>=23.0
+pillow>=10.0.0
+pymupdf>=1.22.0
+pytesseract>=0.3.10
+openai-whisper
+opencv-python
+moviepy
+streamlit
+python-dotenv
+groq
+imageio-ffmpeg
