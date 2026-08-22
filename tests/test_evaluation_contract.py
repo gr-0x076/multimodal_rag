@@ -97,6 +97,29 @@ def test_baseline_vs_multimodal_rag_comparison():
     print("\n Baseline comparison verified: ContextMesh surfaces cross-modal evidence absent in text-only RAG!")
 
 
+def test_insufficient_evidence_behavior():
+    """
+    Validates that an unrelated/insufficient query returns 0 hits
+    and produces an explicit GroundedAnswer stating evidence is insufficient.
+    """
+    print("\n--- Evaluation Test 3: Insufficient Evidence Behavior ---")
+    all_evidence = load_evidence()
+    unrelated_query = "What is the capital of France?"
+    
+    seeds = search_evidence(unrelated_query, all_evidence, top_k=2)
+    assert len(seeds) == 0, f"Unrelated query should yield 0 direct hits, got: {seeds}"
+    
+    expanded = expand_relationships(seeds, all_evidence, max_hops=1)
+    assert len(expanded) == 0, f"Unrelated query expansion should yield 0 items, got: {expanded}"
+    
+    from app import ask
+    answer_obj = ask(unrelated_query, verbose=False)
+    assert isinstance(answer_obj, GroundedAnswer)
+    assert len(answer_obj.cited_evidence) == 0
+    assert "insufficient" in answer_obj.answer.lower()
+    print(" Insufficient evidence behavior verified: Correctly returns 0 hits and reports insufficient evidence!")
+
+
 def run_evaluation_suite():
     print("=" * 65)
     print("Running Multimodal Retrieval & Evaluation Contract (Person 2)")
@@ -104,6 +127,7 @@ def run_evaluation_suite():
     
     test_retrieval_and_relationship_expansion_contract()
     test_baseline_vs_multimodal_rag_comparison()
+    test_insufficient_evidence_behavior()
     
     print("\n" + "=" * 65)
     print(" ALL EVALUATION CONTRACT TESTS PASSED!")

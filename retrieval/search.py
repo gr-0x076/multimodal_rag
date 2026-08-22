@@ -3,9 +3,17 @@ from typing import List, Tuple
 from knowledge.schema import Evidence
 
 
+STOPWORDS = {
+    "what", "is", "the", "of", "and", "to", "in", "a", "an", "where", "how",
+    "why", "which", "who", "for", "with", "on", "at", "by", "from", "it",
+    "this", "that", "was", "were", "are", "be", "been", "being", "have", "has", "had"
+}
+
+
 def tokenize(text: str) -> set:
-    """Helper to tokenize strings into normalized lowercase tokens."""
-    return set(re.findall(r'\b[a-zA-Z0-9_-]+\b', text.lower()))
+    """Helper to tokenize strings into normalized lowercase tokens (excluding stopwords)."""
+    tokens = set(re.findall(r'\b[a-zA-Z0-9_-]+\b', text.lower()))
+    return tokens - STOPWORDS
 
 
 def search_evidence(
