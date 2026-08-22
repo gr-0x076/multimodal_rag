@@ -244,7 +244,7 @@ def run_streamlit_app():
         if engine_type == "groq":
             badge_html = '<span class="badge-groq">⚡ Live Groq API (LLaMA-3.3-70B)</span>'
         else:
-            badge_html = '<span class="badge-fallback">🛡️ Grounded Deterministic Engine (Zero Hallucination)</span>'
+            badge_html = '<span class="badge-fallback">🛡️ Grounded Deterministic Engine (Refusal on Insufficient Evidence)</span>'
 
         st.markdown(f"""
         <div class="answer-card">
