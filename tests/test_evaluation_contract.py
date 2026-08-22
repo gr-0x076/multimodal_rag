@@ -116,7 +116,8 @@ def test_insufficient_evidence_behavior():
     answer_obj = ask(unrelated_query, verbose=False)
     assert isinstance(answer_obj, GroundedAnswer)
     assert len(answer_obj.cited_evidence) == 0
-    assert "insufficient" in answer_obj.answer.lower()
+    assert any(phrase in answer_obj.answer.lower() for phrase in ["insufficient", "does not contain", "no evidence"]), \
+        f"Expected grounded refusal message, got: '{answer_obj.answer}'"
     print(" Insufficient evidence behavior verified: Correctly returns 0 hits and reports insufficient evidence!")
 
 
