@@ -94,10 +94,14 @@ def ingest_all(
     image_evidences: List[Evidence] = []
 
     # 1. Ingest Video & Audio
-    video_candidates = list(dict.fromkeys(
+    all_mp4s = list(dict.fromkeys(
         glob.glob(os.path.join(data_dir, "raw", "*.mp4")) + glob.glob(os.path.join(data_dir, "*.mp4"))
     ))
-    
+    if any(os.path.basename(v).lower() == "meeting.mp4" for v in all_mp4s):
+        video_candidates = [v for v in all_mp4s if os.path.basename(v).lower() != "meeting_audio.mp4"]
+    else:
+        video_candidates = all_mp4s
+
     if video_candidates:
         print(f"\n[1/4] Ingesting {len(video_candidates)} Video & Audio file(s)...")
         for video_path in video_candidates:
