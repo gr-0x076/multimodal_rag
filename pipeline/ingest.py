@@ -104,8 +104,36 @@ def ingest_all(
                 print(f"    Notice during audio extraction for {v_basename}: {e}")
                 curr_audio = []
 
-            # If whisper extracted 0 segments (e.g. synthetic video with silent track), load fallback transcript for meeting.mp4
-            if len(curr_audio) == 0 and "meeting" in v_basename.lower():
+            # Check for explicit custom transcript file or fallback transcript
+            custom_transcript_paths = [
+                os.path.join(data_dir, "raw", f"{v_stem}_transcript.json"),
+                os.path.join(data_dir, f"{v_stem}_transcript.json"),
+            ]
+            custom_transcript_found = False
+            for c_path in custom_transcript_paths:
+                if os.path.exists(c_path):
+                    print(f"    - Loading custom transcript: {c_path}")
+                    transcript = load_transcript(c_path)
+                    curr_audio = []
+                    for i, segment in enumerate(transcript):
+                        curr_audio.append(Evidence(
+                            id=f"{v_stem}_audio_{i}",
+                            content=segment["text"],
+                            modality="audio",
+                            source=v_basename,
+                            timestamp=segment["start"],
+                            entities=extract_entities(segment["text"]),
+                            confidence=0.95,
+                            relationships=[],
+                            metadata={"start": segment["start"], "end": segment["end"]}
+                        ))
+                    with open(os.path.join(processed_dir, f"{v_stem}_transcript.json"), "w", encoding="utf-8") as f:
+                        json.dump(transcript, f, indent=2, ensure_ascii=False)
+                    custom_transcript_found = True
+                    break
+
+            # If no custom transcript and Whisper extracted 0 segments (e.g. synthetic silent track), load golden fallback transcript for meeting.mp4
+            if not custom_transcript_found and len(curr_audio) == 0 and "meeting" in v_basename.lower():
                 fallback_transcript_paths = [
                     os.path.join(data_dir, "raw", "meeting_transcript.json"),
                     os.path.join(data_dir, "meeting_transcript.json")
@@ -114,6 +142,7 @@ def ingest_all(
                     if os.path.exists(fallback_path):
                         print(f"    - Populating audio evidence from golden transcript: {fallback_path}")
                         transcript = load_transcript(fallback_path)
+                        curr_audio = []
                         for i, segment in enumerate(transcript):
                             curr_audio.append(Evidence(
                                 id=f"meeting_audio_{i}",
