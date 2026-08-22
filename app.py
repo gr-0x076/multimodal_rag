@@ -327,18 +327,22 @@ def run_streamlit_app():
 # Main Execution Guard (Runs Streamlit if called via streamlit run, CLI if python app.py)
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Check if executed under Streamlit runtime
-    try:
-        from streamlit.runtime.scriptrunner import get_script_run_ctx
-        if get_script_run_ctx() is not None:
-            run_streamlit_app()
-        else:
-            # Running as standalone CLI python script
-            q = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else GOLDEN_QUERY
-            result = ask(q, verbose=True)
-            print_cli_result(result)
-    except Exception:
-        # Fallback to CLI
+    # Check if executed via `streamlit run`
+    is_streamlit = any("streamlit" in arg for arg in sys.argv) or ("STREAMLIT_SERVER_PORT" in os.environ)
+    if not is_streamlit:
+        # Check if caller is streamlit main module
+        try:
+            import inspect
+            stack = [frame.filename for frame in inspect.stack()]
+            if any("streamlit" in fn for fn in stack):
+                is_streamlit = True
+        except Exception:
+            pass
+
+    if is_streamlit:
+        run_streamlit_app()
+    else:
         q = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else GOLDEN_QUERY
         result = ask(q, verbose=True)
         print_cli_result(result)
+
