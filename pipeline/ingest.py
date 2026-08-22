@@ -84,62 +84,70 @@ def ingest_all(
     image_evidences: List[Evidence] = []
 
     # 1. Ingest Video & Audio
-    video_candidates = glob.glob(os.path.join(data_dir, "raw", "*.mp4")) + glob.glob(os.path.join(data_dir, "*.mp4"))
-    video_path = video_candidates[0] if video_candidates else "data/raw/meeting.mp4"
-
-    if os.path.exists(video_path):
-        print(f"\n[1/4] Ingesting Video & Audio: {video_path}")
-        try:
-            audio_evidences = extract_audio_evidence(
-                video_path,
-                output_transcript_path=os.path.join(processed_dir, "transcript.json")
-            )
-        except Exception as e:
-            print(f"Notice during audio extraction: {e}")
-            audio_evidences = []
-
-        # If whisper extracted 0 segments (e.g. synthetic video with silent track), load fallback transcript
-        if len(audio_evidences) == 0:
-            fallback_transcript_paths = [
-                os.path.join(data_dir, "raw", "meeting_transcript.json"),
-                os.path.join(data_dir, "meeting_transcript.json")
-            ]
-            for fallback_path in fallback_transcript_paths:
-                if os.path.exists(fallback_path):
-                    print(f"  - Populating audio evidence from golden transcript: {fallback_path}")
-                    transcript = load_transcript(fallback_path)
-                    for i, segment in enumerate(transcript):
-                        audio_evidences.append(Evidence(
-                            id=f"meeting_audio_{i}",
-                            content=segment["text"],
-                            modality="audio",
-                            source=os.path.basename(video_path),
-                            timestamp=segment["start"],
-                            entities=extract_entities(segment["text"]),
-                            confidence=0.95,
-                            relationships=[],
-                            metadata={"start": segment["start"], "end": segment["end"]}
-                        ))
-                    # Save into processed transcript.json
-                    with open(os.path.join(processed_dir, "transcript.json"), "w", encoding="utf-8") as f:
-                        json.dump(transcript, f, indent=2, ensure_ascii=False)
-                    break
-
-        frame_evidences = extract_video_evidence(
-            video_path,
-            output_dir=os.path.join(processed_dir, "frames"),
-            interval_seconds=5
-        )
-        
-        # Enrich video frame content and entities using OCR/image extraction
-        for f_ev in frame_evidences:
-            frame_img_path = f_ev.metadata.get("frame_path")
-            if frame_img_path and os.path.exists(frame_img_path):
-                img_extracted = extract_image(frame_img_path)
-                f_ev.entities = extract_entities(img_extracted.content)
-            else:
-                f_ev.entities = extract_entities(f_ev.content)
+    video_candidates = list(dict.fromkeys(
+        glob.glob(os.path.join(data_dir, "raw", "*.mp4")) + glob.glob(os.path.join(data_dir, "*.mp4"))
+    ))
+    
+    if video_candidates:
+        print(f"\n[1/4] Ingesting {len(video_candidates)} Video & Audio file(s)...")
+        for video_path in video_candidates:
+            print(f"  - Processing Video & Audio: {video_path}")
+            v_basename = os.path.basename(video_path)
+            v_stem = os.path.splitext(v_basename)[0]
             
+            try:
+                curr_audio = extract_audio_evidence(
+                    video_path,
+                    output_transcript_path=os.path.join(processed_dir, f"{v_stem}_transcript.json")
+                )
+            except Exception as e:
+                print(f"    Notice during audio extraction for {v_basename}: {e}")
+                curr_audio = []
+
+            # If whisper extracted 0 segments (e.g. synthetic video with silent track), load fallback transcript for meeting.mp4
+            if len(curr_audio) == 0 and "meeting" in v_basename.lower():
+                fallback_transcript_paths = [
+                    os.path.join(data_dir, "raw", "meeting_transcript.json"),
+                    os.path.join(data_dir, "meeting_transcript.json")
+                ]
+                for fallback_path in fallback_transcript_paths:
+                    if os.path.exists(fallback_path):
+                        print(f"    - Populating audio evidence from golden transcript: {fallback_path}")
+                        transcript = load_transcript(fallback_path)
+                        for i, segment in enumerate(transcript):
+                            curr_audio.append(Evidence(
+                                id=f"meeting_audio_{i}",
+                                content=segment["text"],
+                                modality="audio",
+                                source=v_basename,
+                                timestamp=segment["start"],
+                                entities=extract_entities(segment["text"]),
+                                confidence=0.95,
+                                relationships=[],
+                                metadata={"start": segment["start"], "end": segment["end"]}
+                            ))
+                        with open(os.path.join(processed_dir, "transcript.json"), "w", encoding="utf-8") as f:
+                            json.dump(transcript, f, indent=2, ensure_ascii=False)
+                        break
+
+            audio_evidences.extend(curr_audio)
+
+            curr_frames = extract_video_evidence(
+                video_path,
+                output_dir=os.path.join(processed_dir, "frames"),
+                interval_seconds=5
+            )
+            
+            for f_ev in curr_frames:
+                frame_img_path = f_ev.metadata.get("frame_path")
+                if frame_img_path and os.path.exists(frame_img_path):
+                    img_extracted = extract_image(frame_img_path)
+                    f_ev.entities = extract_entities(img_extracted.content)
+                else:
+                    f_ev.entities = extract_entities(f_ev.content)
+            
+            frame_evidences.extend(curr_frames)
+
     elif os.path.exists(os.path.join(processed_dir, "transcript.json")):
         print(f"\n[1/4] Loading existing transcript from {processed_dir}/transcript.json...")
         transcript = load_transcript(os.path.join(processed_dir, "transcript.json"))
