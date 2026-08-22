@@ -1,3 +1,3 @@
-from .schema import Evidence
+from .schema import Evidence, GroundedAnswer
 
-__all__ = ["Evidence"]
+__all__ = ["Evidence", "GroundedAnswer"]
