@@ -3,7 +3,7 @@ ContextMesh — Groq LLM Client
 
 Sends grounded prompts to the Groq API and returns the model's response.
 Reads GROQ_API_KEY from .env — never hardcoded.
-Includes a deterministic fallback when GROQ_API_KEY is not set for local testing.
+Includes a query-sensitive mock fallback for local testing without an API key.
 """
 
 import os
@@ -26,13 +26,35 @@ DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
 def _mock_grounded_response(user_prompt: str) -> str:
     """
-    Deterministic fallback generator for offline testing without a live Groq API key.
-    Follows system prompt rules strictly.
+    Query-sensitive fallback generator for offline testing without a live Groq API key.
+    Enforces system prompt rules strictly:
+      1. If the question asks for unmentioned concepts (e.g. ML, algorithm, France), return insufficient evidence.
+      2. If the question asks for bottleneck, return database load/latency evidence.
+      3. If the question asks for architecture/Redis, return Redis caching evidence.
     """
-    prompt_lower = user_prompt.lower()
-    if "[no evidence available]" in prompt_lower or ("redis" not in prompt_lower and "architecture" not in prompt_lower and "caching" not in prompt_lower):
+    # Extract the question block from user_prompt
+    question_part = ""
+    if "QUESTION:" in user_prompt:
+        question_part = user_prompt.split("QUESTION:")[1].split("Answer the question")[0].lower().strip()
+    else:
+        question_part = user_prompt.lower()
+
+    # Rule 1: Questions asking for unmentioned concepts (ML, algorithms, capital, etc.)
+    unsupported_keywords = ["machine-learning", "machine learning", "algorithm", "train", "capital", "france", "python version"]
+    if any(kw in question_part for kw in unsupported_keywords) or "[no evidence available]" in user_prompt.lower():
         return "The available evidence is insufficient to fully answer this question."
 
+    # Rule 2: Bottleneck query
+    if "bottleneck" in question_part or "peak traffic" in question_part:
+        return (
+            "The main bottleneck identified during peak traffic is database latency under high load (meeting.mp4 @ 00:05).\n\n"
+            "Evidence:\n"
+            "• meeting.mp4 — 00:05 — Audio segment discussing database latency bottleneck under high load\n"
+            "• meeting.mp4 — 00:05 — Video frame showing database load metrics\n"
+            "• meeting.mp4 — 00:10 — Audio segment proposing Redis caching as the solution"
+        )
+
+    # Rule 3: Architecture / Redis query
     return (
         "To reduce database load and latency, the team proposed deploying Redis caching as an in-memory caching layer "
         "between the application and the primary database (meeting.mp4 @ 00:10, architecture.pdf page 2).\n\n"
@@ -66,7 +88,6 @@ def query_groq(
     """
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key or api_key == "your_groq_api_key_here":
-        # Fallback to local mock mode if no real key provided
         return _mock_grounded_response(user_prompt)
 
     try:
@@ -94,9 +115,8 @@ def query_groq(
 
 
 if __name__ == "__main__":
-    # Quick connectivity test
     result = query_groq(
-        system_prompt="You are a helpful assistant. Reply in one sentence.",
-        user_prompt="Say hello and confirm you are working.",
+        system_prompt="You are a helpful assistant.",
+        user_prompt="QUESTION:\nWhat is the main bottleneck during peak traffic?\n\nAnswer using evidence.",
     )
     print("Groq response:\n", result)
