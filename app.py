@@ -263,38 +263,68 @@ def run_streamlit_app():
         tab1, tab2 = st.tabs(["🧩 Evidence Cards", "🕸️ Cross-Modal Relationship Graph"])
 
         with tab1:
-            cols = st.columns(min(len(grounded_ans.cited_evidence), 3) if grounded_ans.cited_evidence else 1)
-            for idx, ev in enumerate(grounded_ans.cited_evidence):
-                col = cols[idx % 3]
-                with col:
-                    mod_cls = f"mod-{ev.modality.replace('_frame', '')}"
-                    mod_label = ev.modality.replace('_', ' ').upper()
-                    loc_str = ""
-                    if ev.timestamp is not None:
-                        loc_str = f"⏱️ {int(ev.timestamp // 60):02d}:{int(ev.timestamp % 60):02d} ({ev.timestamp:.1f}s)"
-                    elif ev.page is not None:
-                        loc_str = f"📄 Page {ev.page}"
-                    else:
-                        loc_str = f"🖼️ Image"
+            audio_items = [e for e in grounded_ans.cited_evidence if e.modality == "audio"]
+            frame_items = [e for e in grounded_ans.cited_evidence if e.modality == "video_frame"]
+            pdf_items = [e for e in grounded_ans.cited_evidence if e.modality == "pdf"]
+            image_items = [e for e in grounded_ans.cited_evidence if e.modality == "image"]
 
-                    with st.container(border=True):
-                        st.markdown(f'<span class="modality-badge {mod_cls}">{mod_label}</span> <small style="color: #64748B;">{loc_str}</small>', unsafe_allow_html=True)
-                        st.markdown(f"**Source:** `{ev.source}`")
-                        
-                        if ev.modality == "video_frame":
+            ev_col1, ev_col2 = st.columns(2)
+
+            with ev_col1:
+                if audio_items:
+                    st.markdown(f"#### 🎤 Spoken Audio (`{len(audio_items)}` segments)")
+                    for ev in audio_items:
+                        mins, secs = divmod(int(ev.timestamp or 0), 60)
+                        ts_fmt = f"{mins:02d}:{secs:02d}"
+                        with st.expander(f"⏱️ [{ts_fmt}] {ev.source} ({ev.id})", expanded=True):
+                            st.markdown(f'<span class="modality-badge mod-audio">AUDIO</span> <small>{ts_fmt} ({ev.timestamp}s)</small>', unsafe_allow_html=True)
+                            st.info(f"🗣️ *\"{ev.content}\"*")
+                            if ev.entities:
+                                st.caption(f"🏷️ **Entities:** {', '.join(ev.entities)}")
+                            if ev.relationships:
+                                st.caption(f"🔗 **Connected to:** {', '.join(ev.relationships)}")
+
+                if pdf_items:
+                    st.markdown(f"#### 📄 PDF Documents (`{len(pdf_items)}` pages)")
+                    for ev in pdf_items:
+                        with st.expander(f"📄 [Page {ev.page}] {ev.source} ({ev.id})", expanded=True):
+                            st.markdown(f'<span class="modality-badge mod-pdf">PDF</span> <small>Page {ev.page}</small>', unsafe_allow_html=True)
+                            st.success(f"📑 *\"{ev.content}\"*")
+                            if ev.entities:
+                                st.caption(f"🏷️ **Entities:** {', '.join(ev.entities)}")
+                            if ev.relationships:
+                                st.caption(f"🔗 **Connected to:** {', '.join(ev.relationships)}")
+
+            with ev_col2:
+                if frame_items:
+                    st.markdown(f"#### 🎥 Video Keyframes (`{len(frame_items)}` frames)")
+                    for ev in frame_items:
+                        mins, secs = divmod(int(ev.timestamp or 0), 60)
+                        ts_fmt = f"{mins:02d}:{secs:02d}"
+                        with st.expander(f"🎬 [{ts_fmt}] {ev.source} ({ev.id})", expanded=True):
+                            st.markdown(f'<span class="modality-badge mod-video">VIDEO FRAME</span> <small>{ts_fmt} ({ev.timestamp}s)</small>', unsafe_allow_html=True)
                             frame_path = ev.metadata.get("frame_path")
                             if frame_path and os.path.exists(frame_path):
-                                st.image(frame_path, caption=f"Frame at {ev.timestamp:.1f}s", use_container_width=True)
-                        elif ev.modality == "image":
+                                st.image(frame_path, caption=f"Keyframe @ {ts_fmt} ({ev.source})", use_container_width=True)
+                            st.write(f"_{ev.content}_")
+                            if ev.entities:
+                                st.caption(f"🏷️ **Entities:** {', '.join(ev.entities)}")
+                            if ev.relationships:
+                                st.caption(f"🔗 **Connected to:** {', '.join(ev.relationships)}")
+
+                if image_items:
+                    st.markdown(f"#### 🖼️ Visual Diagrams (`{len(image_items)}` images)")
+                    for ev in image_items:
+                        with st.expander(f"🖼️ {ev.source} ({ev.id})", expanded=True):
+                            st.markdown(f'<span class="modality-badge mod-image">IMAGE</span>', unsafe_allow_html=True)
                             img_path = os.path.join(root_dir, "data", ev.source)
                             if os.path.exists(img_path):
                                 st.image(img_path, caption=ev.source, use_container_width=True)
-
-                        st.write(f"_{ev.content[:140]}..._")
-                        if ev.entities:
-                            st.caption(f"🏷️ **Entities:** {', '.join(ev.entities)}")
-                        if ev.relationships:
-                            st.caption(f"🔗 **Linked to:** {', '.join(ev.relationships)}")
+                            st.write(f"_{ev.content}_")
+                            if ev.entities:
+                                st.caption(f"🏷️ **Entities:** {', '.join(ev.entities)}")
+                            if ev.relationships:
+                                st.caption(f"🔗 **Connected to:** {', '.join(ev.relationships)}")
 
         with tab2:
             st.write("#### 🔗 Provenance & Cross-Modal Links")
