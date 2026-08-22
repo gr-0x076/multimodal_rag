@@ -25,18 +25,23 @@ def build_grounded_answer(
     query: str,
     answer_text: str,
     cited_evidence: List[Evidence],
+    engine: str = "fallback",
     metadata: dict = None,
 ) -> GroundedAnswer:
     """
     Construct a GroundedAnswer object conforming to Person 2's evaluation contract.
     """
     modalities = sorted(list({ev.modality for ev in cited_evidence}))
+    merged_metadata = {"engine": engine}
+    if metadata:
+        merged_metadata.update(metadata)
+
     return GroundedAnswer(
         query=query,
         answer=answer_text,
         cited_evidence=cited_evidence,
         modalities_used=modalities,
-        metadata=metadata or {},
+        metadata=merged_metadata,
     )
 
 

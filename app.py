@@ -23,15 +23,14 @@ from knowledge.schema import Evidence, GroundedAnswer
 from knowledge.relationships import expand_relationships
 from retrieval.search import search_evidence
 from retrieval.grounding import build_grounded_prompt, build_grounded_answer, format_provenance
-from llm.groq_client import query_groq
+from llm.groq_client import query_groq_with_engine
 from tests.test_end_to_end import load_evidence
 
 
 EVIDENCE_PATH = os.path.join(root_dir, "data", "processed", "evidence.json")
 
 GOLDEN_QUERY = (
-    "What architecture was proposed to reduce database load, "
-    "and what visual/document evidence supports it?"
+    "What architecture was proposed to reduce database load?"
 )
 
 
@@ -71,7 +70,7 @@ def ask(
             answer="No evidence found in data/processed/evidence.json. Please run pipeline/ingest.py first.",
             cited_evidence=[],
             modalities_used=[],
-            metadata={"status": "error_no_evidence"}
+            metadata={"engine": "fallback", "status": "error_no_evidence"}
         )
 
     # 1. Direct Search Hits
@@ -105,17 +104,17 @@ def ask(
         print("\n[4/4] Calling Groq LLM...")
 
     try:
-        raw_answer = query_groq(system_prompt, user_prompt)
-    except EnvironmentError as e:
-        raw_answer = f"[Groq API Key missing] {e}"
-    except RuntimeError as e:
-        raw_answer = f"[Groq API Error] {e}"
+        raw_answer, engine_used = query_groq_with_engine(system_prompt, user_prompt)
+    except Exception as e:
+        raw_answer = f"[LLM Error] {e}"
+        engine_used = "fallback"
 
     # 5. Build & Return GroundedAnswer Contract Object
     grounded_answer = build_grounded_answer(
         query=question,
         answer_text=raw_answer,
         cited_evidence=expanded_evidence,
+        engine=engine_used,
         metadata={
             "seed_ids": [ev.id for ev in seeds],
             "expanded_ids": [ev.id for ev in expanded_evidence],
@@ -141,6 +140,11 @@ def print_result(result: GroundedAnswer) -> None:
     print(f"\n{'-' * 70}")
     print(f"\n{result.answer}")
     print(f"\n{'-' * 70}")
+
+    print(f"\nMetadata:")
+    print(f"  engine        : {result.metadata.get('engine', 'unknown')}")
+    print(f"  seed_ids      : {result.metadata.get('seed_ids', [])}")
+    print(f"  expanded_ids  : {result.metadata.get('expanded_ids', [])}")
 
     if result.cited_evidence:
         print(f"\nCited Evidence ({len(result.cited_evidence)} items, Modalities: {', '.join(result.modalities_used)}):")

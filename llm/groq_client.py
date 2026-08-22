@@ -66,34 +66,25 @@ def _mock_grounded_response(user_prompt: str) -> str:
     )
 
 
-def query_groq(
+def query_groq_with_engine(
     system_prompt: str,
     user_prompt: str,
     model: str = DEFAULT_MODEL,
     temperature: float = 0.2,
     max_tokens: int = 2048,
-) -> str:
+) -> tuple[str, str]:
     """
-    Send a grounded prompt to Groq and return the assistant's response text.
-
-    Args:
-        system_prompt:  System-level grounding instructions.
-        user_prompt:    User message including evidence context + question.
-        model:          Groq model identifier.
-        temperature:    Sampling temperature (low = more deterministic).
-        max_tokens:     Maximum response length.
-
-    Returns:
-        The assistant's response text.
+    Send a grounded prompt to Groq and return (response_text, engine_used).
+    Returns ("groq" or "fallback") as engine_used.
     """
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key or api_key == "your_groq_api_key_here":
-        return _mock_grounded_response(user_prompt)
+        return _mock_grounded_response(user_prompt), "fallback"
 
     try:
         from groq import Groq
     except ImportError:
-        return _mock_grounded_response(user_prompt)
+        return _mock_grounded_response(user_prompt), "fallback"
 
     client = Groq(api_key=api_key)
 
@@ -107,11 +98,22 @@ def query_groq(
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        return response.choices[0].message.content
+        return response.choices[0].message.content, "groq"
 
     except Exception as e:
         print(f"[groq_client notice] API error ({e}). Falling back to grounded mock response.")
-        return _mock_grounded_response(user_prompt)
+        return _mock_grounded_response(user_prompt), "fallback"
+
+
+def query_groq(
+    system_prompt: str,
+    user_prompt: str,
+    model: str = DEFAULT_MODEL,
+    temperature: float = 0.2,
+    max_tokens: int = 2048,
+) -> str:
+    text, _ = query_groq_with_engine(system_prompt, user_prompt, model, temperature, max_tokens)
+    return text
 
 
 if __name__ == "__main__":
