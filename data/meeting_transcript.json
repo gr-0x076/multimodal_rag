@@ -7,7 +7,7 @@
   {
     "start": 5.0,
     "end": 10.0,
-    "text": "Our main problem is that database load is increasing."
+    "text": "Our main bottleneck and problem is that database load is increasing under peak traffic."
   },
   {
     "start": 10.0,
