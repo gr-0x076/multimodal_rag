@@ -1,51 +1,199 @@
-import streamlit as st
-import os
+"""
+ContextMesh — End-to-End Multimodal RAG Pipeline
+
+Question → Retrieval → Relationship Expansion → Grounding → Groq → Answer + Provenance
+
+Usage:
+    python app.py                              # Run the golden demo query
+    python app.py "Your question here"         # Run a custom query
+    streamlit run app.py                       # Launch the Streamlit UI (later)
+"""
+
 import json
+import os
+import sys
+from pathlib import Path
+from typing import List, Dict, Any, Optional
 
-st.set_page_config(page_title="ContextMesh - Multimodal Ingestion", layout="wide")
+# Ensure project root is on sys.path
+root_dir = str(Path(__file__).resolve().parent)
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
 
-st.title("🎥 ContextMesh — Video & Audio Ingestion")
-st.markdown("Ingest MP4 video files into timestamped audio transcripts and visual video frames.")
+from knowledge.schema import Evidence
+from knowledge.relationships import build_relationship_graph, expand_related
+from retrieval.search import search, load_evidence
+from retrieval.grounding import build_grounded_prompt, format_provenance
+from llm.groq_client import query_groq
 
-video_file = st.sidebar.text_input("Video File Path", value="data/raw/meeting.mp4")
 
-if st.sidebar.button("Run Ingestion Pipeline"):
-    if os.path.exists(video_file):
-        with st.spinner("Processing video and audio..."):
-            from pipeline.ingest import main as run_ingest
-            run_ingest()
-        st.success("Ingestion complete!")
+EVIDENCE_PATH = os.path.join(root_dir, "data", "processed", "evidence.json")
+
+GOLDEN_QUERY = (
+    "What architecture was proposed to reduce database load, "
+    "and where is the supporting visual/document evidence?"
+)
+
+
+# ---------------------------------------------------------------------------
+# Core Pipeline
+# ---------------------------------------------------------------------------
+
+def ask(
+    question: str,
+    evidence_path: Optional[str] = None,
+    top_k: int = 10,
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """
+    Full ContextMesh pipeline:
+
+        Question
+            ↓
+        Retrieval  (search across audio, video_frame, pdf, image)
+            ↓
+        Relationship expansion
+            ↓
+        Grounded context construction
+            ↓
+        Groq LLM call
+            ↓
+        Answer + Provenance
+
+    Returns:
+        {
+            "question": str,
+            "answer": str,
+            "sources": [
+                {"id": ..., "source": ..., "modality": ..., "timestamp": ..., "page": ...},
+                ...
+            ],
+            "evidence_count": int,
+        }
+    """
+    evidence_path = evidence_path or EVIDENCE_PATH
+
+    # Step 1 — Retrieval: find relevant evidence across all modalities
+    if verbose:
+        print("\n[1/4] Retrieving relevant evidence...")
+
+    retrieved = search(question, evidence_path=evidence_path, top_k=top_k)
+
+    if not retrieved:
+        return {
+            "question": question,
+            "answer": "No evidence found. Please ensure the evidence store has been populated.",
+            "sources": [],
+            "evidence_count": 0,
+        }
+
+    if verbose:
+        print(f"      Found {len(retrieved)} evidence items:")
+        for ev in retrieved:
+            label = f"{ev.source}"
+            if ev.timestamp is not None:
+                mins, secs = divmod(int(ev.timestamp), 60)
+                label += f" @ {mins:02d}:{secs:02d}"
+            if ev.page is not None:
+                label += f" — page {ev.page}"
+            print(f"        [{ev.modality:12s}] {ev.id}  ({label})")
+
+    # Step 2 — Build grounded prompt
+    if verbose:
+        print("\n[2/4] Building grounded context...")
+
+    system_prompt, user_prompt = build_grounded_prompt(question, retrieved)
+
+    if verbose:
+        print(f"      Context length: {len(user_prompt)} chars")
+
+    # Step 3 — Call Groq
+    if verbose:
+        print("\n[3/4] Calling Groq LLM...")
+
+    try:
+        answer = query_groq(system_prompt, user_prompt)
+    except EnvironmentError as e:
+        return {
+            "question": question,
+            "answer": f"[Groq API not configured] {e}",
+            "sources": format_provenance(retrieved),
+            "evidence_count": len(retrieved),
+        }
+    except RuntimeError as e:
+        return {
+            "question": question,
+            "answer": f"[Groq API error] {e}",
+            "sources": format_provenance(retrieved),
+            "evidence_count": len(retrieved),
+        }
+
+    # Step 4 — Format provenance
+    if verbose:
+        print("\n[4/4] Formatting provenance...")
+
+    sources = format_provenance(retrieved)
+
+    return {
+        "question": question,
+        "answer": answer,
+        "sources": sources,
+        "evidence_count": len(retrieved),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Pretty Printer
+# ---------------------------------------------------------------------------
+
+def print_result(result: Dict[str, Any]) -> None:
+    """Print the pipeline result in a human-readable format."""
+    print("\n" + "=" * 70)
+    print("  ContextMesh -- Multimodal RAG Response")
+    print("=" * 70)
+
+    print(f"\nQuestion: {result['question']}")
+    print(f"\n{'-' * 70}")
+    print(f"\n{result['answer']}")
+    print(f"\n{'-' * 70}")
+
+    if result["sources"]:
+        print(f"\nEvidence Sources ({result['evidence_count']} items):")
+        for src in result["sources"]:
+            line = f"  * {src['source']}"
+            if "timestamp" in src:
+                line += f" -- {src['timestamp']}"
+            if "page" in src:
+                line += f" -- page {src['page']}"
+            line += f"  [{src['modality']}]"
+            print(line)
     else:
-        st.error(f"Video file not found at: {video_file}")
+        print("\n  (no evidence found)")
 
-st.header("Processed Evidence Explorer")
+    print("\n" + "=" * 70)
 
-evidence_path = "data/processed/evidence.json"
-if os.path.exists(evidence_path):
-    with open(evidence_path, "r", encoding="utf-8") as f:
-        evidences = json.load(f)
 
-    st.write(f"Total Evidence Items: **{len(evidences)}**")
+# ---------------------------------------------------------------------------
+# CLI Entry Point
+# ---------------------------------------------------------------------------
 
-    audio_evs = [e for e in evidences if e.get("modality") == "audio"]
-    frame_evs = [e for e in evidences if e.get("modality") == "video_frame"]
+if __name__ == "__main__":
+    # Accept a custom query or use the golden demo query
+    if len(sys.argv) > 1:
+        question = " ".join(sys.argv[1:])
+    else:
+        question = GOLDEN_QUERY
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader(f"🎤 Audio Transcripts ({len(audio_evs)})")
-        for ev in audio_evs:
-            with st.expander(f"[{ev.get('timestamp', 0):.1f}s] {ev.get('id')}"):
-                st.write(f"**Content:** {ev.get('content')}")
-                st.write(f"**Entities:** {', '.join(ev.get('entities', []))}")
-                st.write(f"**Relationships:** {ev.get('relationships')}")
+    # Check if evidence exists; if not, try generating seed data
+    if not os.path.exists(EVIDENCE_PATH):
+        print("[setup] evidence.json not found. Generating seed data...")
+        try:
+            from tests.create_seed_data import main as create_seed
+            create_seed()
+        except Exception as e:
+            print(f"[setup] Could not generate seed data: {e}")
+            print(f"[setup] Run: python -m tests.create_seed_data")
+            sys.exit(1)
 
-    with col2:
-        st.subheader(f"🎥 Video Frames ({len(frame_evs)})")
-        for ev in frame_evs:
-            with st.expander(f"[{ev.get('timestamp', 0):.1f}s] {ev.get('id')}"):
-                st.write(f"**Content:** {ev.get('content')}")
-                frame_path = ev.get("metadata", {}).get("frame_path")
-                if frame_path and os.path.exists(frame_path):
-                    st.image(frame_path, caption=f"Frame at {ev.get('timestamp')}s")
-else:
-    st.info("No processed evidence found yet. Place a video in `data/raw/meeting.mp4` and run `python pipeline/ingest.py`.")
+    result = ask(question, verbose=True)
+    print_result(result)
