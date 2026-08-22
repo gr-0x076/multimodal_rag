@@ -5,7 +5,7 @@ from typing import Optional, List, Dict, Any
 class Evidence:
     """
     Unified Evidence Object Schema for ContextMesh Multimodal RAG.
-    All ingestion pipelines (Video, Audio, PDF, Image) must produce Evidence objects conforming to this contract.
+    All ingestion pipelines (Video, Audio, PDF, Image) produce Evidence objects conforming to this contract.
     """
     id: str
     content: str
@@ -29,5 +29,27 @@ class Evidence:
             "entities": self.entities,
             "confidence": self.confidence,
             "relationships": self.relationships,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class GroundedAnswer:
+    """
+    Standard Answer contract for Person 3's LLM / Groq answering engine.
+    Ensures answers are grounded in explicit multimodal evidence citations.
+    """
+    query: str
+    answer: str
+    cited_evidence: List[Evidence] = field(default_factory=list)
+    modalities_used: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "query": self.query,
+            "answer": self.answer,
+            "cited_evidence": [ev.to_dict() for ev in self.cited_evidence],
+            "modalities_used": self.modalities_used,
             "metadata": self.metadata,
         }
