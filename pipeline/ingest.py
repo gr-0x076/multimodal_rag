@@ -28,7 +28,8 @@ def build_temporal_relationships(
     window_seconds: float = 6.0
 ) -> None:
     """
-    Connect audio evidence objects with frame evidence objects that occur within a temporal window.
+    Connect audio evidence objects with frame evidence objects that occur within a temporal window
+    STRICTLY within the same video source file.
     """
     for audio_ev in audio_evidences:
         if audio_ev.timestamp is None:
@@ -36,6 +37,9 @@ def build_temporal_relationships(
         audio_time = audio_ev.timestamp
         for frame_ev in frame_evidences:
             if frame_ev.timestamp is None:
+                continue
+            # Enforce same source file requirement for temporal relationships
+            if audio_ev.source != frame_ev.source:
                 continue
             frame_time = frame_ev.timestamp
             if abs(frame_time - audio_time) <= window_seconds:
@@ -47,17 +51,23 @@ def build_temporal_relationships(
 
 def build_entity_relationships(all_evidences: List[Evidence]) -> None:
     """
-    Connect evidence objects that share technical entities (cross-modal linking).
-    E.g. Audio discussing 'Redis' connects to PDF page discussing 'Redis' and Diagram image.
+    Connect evidence objects that share technical entities (cross-modal linking),
+    excluding generic system/boilerplate tokens.
     """
+    boilerplate_words = {
+        "image", "jpeg", "jpg", "png", "ocr", "path", "readme", "see",
+        "dimensions", "format", "unavailable", "detected", "extracted",
+        "video", "frame", "file", "text", "information", "page"
+    }
+
     for i, ev_a in enumerate(all_evidences):
-        entities_a = set(e.lower() for e in ev_a.entities)
+        entities_a = set(e.lower() for e in ev_a.entities if e.lower() not in boilerplate_words)
         if not entities_a:
             continue
         for j, ev_b in enumerate(all_evidences):
             if i >= j:
                 continue
-            entities_b = set(e.lower() for e in ev_b.entities)
+            entities_b = set(e.lower() for e in ev_b.entities if e.lower() not in boilerplate_words)
             if not entities_b:
                 continue
             common = entities_a.intersection(entities_b)
@@ -246,4 +256,57 @@ def ingest_all(
 
 
 if __name__ == "__main__":
-    ingest_all()
+    import argparse
+    parser = argparse.ArgumentParser(description="ContextMesh Multimodal Ingestion Pipeline")
+    parser.add_argument("--video", type=str, default=None, help="Path to single video for single-video ingestion validation")
+    args = parser.parse_args()
+
+    if args.video:
+        if not os.path.exists(args.video):
+            print(f"Error: Video file not found at {args.video}")
+            sys.exit(1)
+        v_basename = os.path.basename(args.video)
+        v_stem = os.path.splitext(v_basename)[0]
+        proc_dir = "data/processed"
+        os.makedirs(proc_dir, exist_ok=True)
+        
+        print(f"\n=======================================================")
+        print(f" Single-Video Ingestion Validation: {args.video}")
+        print(f"=======================================================")
+        
+        # Audio
+        audio_ev = extract_audio_evidence(args.video, output_transcript_path=os.path.join(proc_dir, f"{v_stem}_transcript.json"))
+        # Video frames
+        frame_ev = extract_video_evidence(args.video, output_dir=os.path.join(proc_dir, "frames"), interval_seconds=5)
+        for f in frame_ev:
+            frame_img_path = f.metadata.get("frame_path")
+            if frame_img_path and os.path.exists(frame_img_path):
+                img_ex = extract_image(frame_img_path)
+                f.entities = extract_entities(img_ex.content)
+
+        build_temporal_relationships(audio_ev, frame_ev, window_seconds=6.0)
+        combined = audio_ev + frame_ev
+        build_entity_relationships(combined)
+
+        print(f"\nINGESTION DEBUG SUMMARY FOR: {v_basename}")
+        print(f"  VIDEO SOURCE         : {args.video}")
+        print(f"  AUDIO SEGMENTS       : {len(audio_ev)}")
+        print(f"  FRAMES EXTRACTED     : {len(frame_ev)}")
+        print(f"  TOTAL EVIDENCE NODES : {len(combined)}")
+        print(f"  RELATIONSHIPS BUILT  : {sum(len(e.relationships) for e in combined)}")
+        
+        if audio_ev:
+            print("\nSample Audio Evidence Items:")
+            for a in audio_ev[:3]:
+                print(f"  - [{a.id}] ({a.timestamp:.1f}s): \"{a.content}\" | Entities: {a.entities}")
+        else:
+            print("\n  Notice: No speech audio segments transcribed for this video.")
+
+        if frame_ev:
+            print("\nSample Video Frame Evidence Items:")
+            for f in frame_ev[:3]:
+                print(f"  - [{f.id}] ({f.timestamp:.1f}s): {f.metadata.get('frame_path')} | Entities: {f.entities}")
+
+        print(f"=======================================================\n")
+    else:
+        ingest_all()

@@ -24,7 +24,9 @@ def extract_frames(
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file not found at: {video_path}")
 
-    os.makedirs(output_dir, exist_ok=True)
+    v_stem = Path(video_path).stem.lower()
+    target_dir = os.path.join(output_dir, v_stem)
+    os.makedirs(target_dir, exist_ok=True)
 
     video = cv2.VideoCapture(video_path)
     fps = video.get(cv2.CAP_PROP_FPS)
@@ -47,8 +49,8 @@ def extract_frames(
         success, frame = video.read()
 
         if success:
-            filename = f"frame_{int(current_time):06d}.jpg"
-            frame_path = os.path.join(output_dir, filename)
+            filename = f"{v_stem}_frame_{int(current_time):06d}.jpg"
+            frame_path = os.path.join(target_dir, filename)
             cv2.imwrite(frame_path, frame)
             print(f"Saved frame at {current_time:.2f}s -> {frame_path}")
 

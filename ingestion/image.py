@@ -43,25 +43,31 @@ def extract_image(image_path: str) -> Evidence:
     width, height = image.size
     
     ocr_text = ""
+    ocr_status = "success"
     try:
-        ocr_text = pytesseract.image_to_string(image).strip()
-    except Exception as e:
-        # Fallback gracefully if tesseract binary is not installed in the OS
-        ocr_text = f"[Image: {path_obj.name} (dimensions: {width}x{height}, format: {image.format}) - OCR unavailable: {str(e)}]"
-        
-    if not ocr_text:
-        ocr_text = f"[Image: {path_obj.name} (dimensions: {width}x{height}) - No readable text detected]"
+        raw_ocr = pytesseract.image_to_string(image).strip()
+        if raw_ocr:
+            ocr_text = raw_ocr
+    except Exception:
+        ocr_status = "unavailable"
+
+    if ocr_text:
+        content = f"Visible text from {path_obj.name}: {ocr_text}"
+    else:
+        content = f"Visual asset {path_obj.name} ({width}x{height})"
         
     evidence = Evidence(
         id=f"{path_obj.stem}_image",
-        content=ocr_text,
+        content=content,
         modality="image",
         source=path_obj.name,
         confidence=0.85,
         metadata={
             "width": width,
             "height": height,
-            "format": image.format or path_obj.suffix.lstrip(".").upper()
+            "format": image.format or path_obj.suffix.lstrip(".").upper(),
+            "ocr_text": ocr_text,
+            "ocr_status": ocr_status
         }
     )
     return evidence

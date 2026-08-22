@@ -30,22 +30,29 @@ from knowledge.schema import Evidence
 
 
 def extract_entities(text: str) -> List[str]:
-    """Extract key technical terms or capitalized words as entities."""
+    """Extract key technical terms or capitalized words as entities, excluding system boilerplate."""
     known_keywords = {
         "redis", "caching", "database", "sql", "nosql", "python", "api",
         "contextmesh", "multimodal", "rag", "architecture", "system",
         "latency", "load", "server", "cluster", "node", "index", "vector"
     }
+    boilerplate = {
+        "image", "jpeg", "jpg", "png", "ocr", "path", "readme", "see",
+        "dimensions", "format", "unavailable", "detected", "extracted",
+        "video", "frame", "file", "text", "information"
+    }
     found = set()
     words = re.findall(r'\b[A-Za-z0-9_-]+\b', text)
     for word in words:
         w_lower = word.lower()
+        if w_lower in boilerplate:
+            continue
         if w_lower in known_keywords:
             if w_lower in ["redis", "sql", "nosql", "api", "rag", "python"]:
                 found.add(w_lower.capitalize() if w_lower != "redis" else "Redis")
             else:
                 found.add(word.lower())
-        elif word[0].isupper() and len(word) > 2 and w_lower not in {"today", "we're", "going", "there", "this", "that", "what", "with", "have"}:
+        elif word[0].isupper() and len(word) > 2 and w_lower not in {"today", "we're", "going", "there", "this", "that", "what", "with", "have", "from", "video"}:
             found.add(word)
     return sorted(list(found))
 
@@ -71,10 +78,14 @@ def transcribe_video(
 
     segments = []
     for segment in result.get("segments", []):
+        text_clean = segment["text"].strip()
+        # Ignore single generic hallucinated tokens like "you" or empty strings
+        if not text_clean or text_clean.lower() in {"you", "you.", "thank you.", "subtitles by"} or len(text_clean) < 3:
+            continue
         segments.append({
             "start": round(float(segment["start"]), 2),
             "end": round(float(segment["end"]), 2),
-            "text": segment["text"].strip()
+            "text": text_clean
         })
 
     if output_path:
