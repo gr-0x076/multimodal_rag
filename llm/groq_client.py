@@ -15,7 +15,14 @@ except ImportError:
 
 from knowledge.schema import Evidence, GroundedAnswer
 
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
+CANDIDATE_MODELS = [
+    "openai/gpt-oss-120b",
+    "groq/compound",
+    "groq/compound-mini",
+    "openai/gpt-oss-20b",
+    "llama-3.3-70b-versatile"
+]
 
 SYSTEM_PROMPT = """You are ContextMesh, an expert multimodal retrieval-augmented assistant.
 Your answers MUST be strictly grounded in the provided multimodal evidence items.
