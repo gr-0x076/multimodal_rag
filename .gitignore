@@ -18,7 +18,9 @@ Thumbs.db
 
 # Environment variables & secrets
 .env
-.env.*
+.env.local
+.env.*.local
+!.env.example
 *.env
 
 # Output directory & Temporary files
