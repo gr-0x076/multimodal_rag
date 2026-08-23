@@ -29,12 +29,15 @@ def build_temporal_relationships(
 ) -> None:
     """
     Connect audio evidence objects with frame evidence objects that occur within a temporal window
-    STRICTLY within the same video source file.
+    STRICTLY within the same video source file. Also enriches metadata with synchronized snippets.
     """
     for audio_ev in audio_evidences:
         if audio_ev.timestamp is None:
             continue
         audio_time = audio_ev.timestamp
+        best_frame = None
+        min_frame_diff = float("inf")
+
         for frame_ev in frame_evidences:
             if frame_ev.timestamp is None:
                 continue
@@ -42,11 +45,41 @@ def build_temporal_relationships(
             if audio_ev.source != frame_ev.source:
                 continue
             frame_time = frame_ev.timestamp
-            if abs(frame_time - audio_time) <= window_seconds:
+            diff = abs(frame_time - audio_time)
+            if diff <= window_seconds:
                 if frame_ev.id not in audio_ev.relationships:
                     audio_ev.relationships.append(frame_ev.id)
                 if audio_ev.id not in frame_ev.relationships:
                     frame_ev.relationships.append(audio_ev.id)
+
+                if diff < min_frame_diff:
+                    min_frame_diff = diff
+                    best_frame = frame_ev
+
+        # Attach nearest frame's OCR text to audio metadata
+        if best_frame and best_frame.metadata.get("ocr_text"):
+            audio_ev.metadata["synchronized_screen_text"] = best_frame.metadata["ocr_text"]
+            audio_ev.metadata["synchronized_frame_id"] = best_frame.id
+
+    # Inverse pass: attach nearest audio's transcript to frame metadata
+    for frame_ev in frame_evidences:
+        if frame_ev.timestamp is None:
+            continue
+        frame_time = frame_ev.timestamp
+        best_audio = None
+        min_audio_diff = float("inf")
+
+        for audio_ev in audio_evidences:
+            if audio_ev.timestamp is None or audio_ev.source != frame_ev.source:
+                continue
+            diff = abs(audio_ev.timestamp - frame_time)
+            if diff <= window_seconds and diff < min_audio_diff:
+                min_audio_diff = diff
+                best_audio = audio_ev
+
+        if best_audio:
+            frame_ev.metadata["synchronized_audio_transcript"] = best_audio.content
+            frame_ev.metadata["synchronized_audio_id"] = best_audio.id
 
 
 def build_entity_relationships(all_evidences: List[Evidence]) -> None:
@@ -98,132 +131,87 @@ def ingest_all(
         glob.glob(os.path.join(data_dir, "raw", "*.mp4")) + glob.glob(os.path.join(data_dir, "*.mp4"))
     ))
     if any(os.path.basename(v).lower() == "meeting.mp4" for v in all_mp4s):
-        video_candidates = [v for v in all_mp4s if os.path.basename(v).lower() != "meeting_audio.mp4"]
-    else:
-        video_candidates = all_mp4s
+        meeting_variants = [v for v in all_mp4s if os.path.basename(v).lower() in ("meeting.mp4", "meeting_audio.mp4")]
+        if len(meeting_variants) > 1:
+            canonical_meeting = next((v for v in meeting_variants if os.path.basename(v).lower() == "meeting.mp4"), meeting_variants[0])
+            all_mp4s = [v for v in all_mp4s if v not in meeting_variants] + [canonical_meeting]
 
-    if video_candidates:
-        print(f"\n[1/4] Ingesting {len(video_candidates)} Video & Audio file(s)...")
-        for video_path in video_candidates:
-            print(f"  - Processing Video & Audio: {video_path}")
-            v_basename = os.path.basename(video_path)
-            v_stem = os.path.splitext(v_basename)[0]
-            
-            try:
-                curr_audio = extract_audio_evidence(
-                    video_path,
-                    output_transcript_path=os.path.join(processed_dir, f"{v_stem}_transcript.json")
-                )
-            except Exception as e:
-                print(f"    Notice during audio extraction for {v_basename}: {e}")
-                curr_audio = []
+    print(f"\n[1/4] Ingesting {len(all_mp4s)} Video & Audio file(s)...")
+    for video_path in all_mp4s:
+        v_basename = os.path.basename(video_path)
+        v_stem = Path(v_basename).stem.lower()
+        print(f"  - Processing Video & Audio: {video_path}")
 
-            # Check for explicit custom transcript file or fallback transcript
-            custom_transcript_paths = [
-                os.path.join(data_dir, "raw", f"{v_stem}_transcript.json"),
-                os.path.join(data_dir, f"{v_stem}_transcript.json"),
-            ]
-            custom_transcript_found = False
-            for c_path in custom_transcript_paths:
-                if os.path.exists(c_path):
-                    print(f"    - Loading custom transcript: {c_path}")
-                    transcript = load_transcript(c_path)
-                    curr_audio = []
-                    for i, segment in enumerate(transcript):
-                        curr_audio.append(Evidence(
-                            id=f"{v_stem}_audio_{i}",
-                            content=segment["text"],
-                            modality="audio",
-                            source=v_basename,
-                            timestamp=segment["start"],
-                            entities=extract_entities(segment["text"]),
-                            confidence=0.95,
-                            relationships=[],
-                            metadata={"start": segment["start"], "end": segment["end"]}
-                        ))
-                    with open(os.path.join(processed_dir, f"{v_stem}_transcript.json"), "w", encoding="utf-8") as f:
-                        json.dump(transcript, f, indent=2, ensure_ascii=False)
-                    custom_transcript_found = True
-                    break
+        custom_transcript_candidates = [
+            os.path.join(data_dir, f"{v_stem}_transcript.json"),
+            os.path.join(data_dir, "raw", f"{v_stem}_transcript.json"),
+            os.path.join(processed_dir, f"{v_stem}_transcript.json"),
+        ]
+        loaded_custom = False
+        curr_audio = []
+        for custom_p in custom_transcript_candidates:
+            if os.path.exists(custom_p):
+                print(f"    - Loading transcript: {custom_p}")
+                transcript = load_transcript(custom_p)
+                for i, segment in enumerate(transcript):
+                    curr_audio.append(Evidence(
+                        id=f"{v_stem}_audio_{i}",
+                        content=segment["text"],
+                        modality="audio",
+                        source=v_basename,
+                        timestamp=segment["start"],
+                        entities=extract_entities(segment["text"]),
+                        confidence=0.95,
+                        relationships=[],
+                        metadata={"start": segment["start"], "end": segment["end"], "duration": segment.get("end", 0) - segment.get("start", 0)}
+                    ))
+                loaded_custom = True
+                break
 
-            # If no custom transcript and Whisper extracted 0 segments (e.g. synthetic silent track), load golden fallback transcript for meeting.mp4
-            if not custom_transcript_found and len(curr_audio) == 0 and "meeting" in v_basename.lower():
-                fallback_transcript_paths = [
-                    os.path.join(data_dir, "raw", "meeting_transcript.json"),
-                    os.path.join(data_dir, "meeting_transcript.json")
-                ]
-                for fallback_path in fallback_transcript_paths:
-                    if os.path.exists(fallback_path):
-                        print(f"    - Populating audio evidence from golden transcript: {fallback_path}")
-                        transcript = load_transcript(fallback_path)
-                        curr_audio = []
-                        for i, segment in enumerate(transcript):
-                            curr_audio.append(Evidence(
-                                id=f"meeting_audio_{i}",
-                                content=segment["text"],
-                                modality="audio",
-                                source=v_basename,
-                                timestamp=segment["start"],
-                                entities=extract_entities(segment["text"]),
-                                confidence=0.95,
-                                relationships=[],
-                                metadata={"start": segment["start"], "end": segment["end"]}
-                            ))
-                        with open(os.path.join(processed_dir, "transcript.json"), "w", encoding="utf-8") as f:
-                            json.dump(transcript, f, indent=2, ensure_ascii=False)
-                        break
-
-            audio_evidences.extend(curr_audio)
-
-            curr_frames = extract_video_evidence(
+        if not loaded_custom:
+            audio_ev = extract_audio_evidence(
                 video_path,
-                output_dir=os.path.join(processed_dir, "frames"),
-                interval_seconds=5
+                output_transcript_path=os.path.join(processed_dir, f"{v_stem}_transcript.json")
             )
-            
-            for f_ev in curr_frames:
-                frame_img_path = f_ev.metadata.get("frame_path")
-                if frame_img_path and os.path.exists(frame_img_path):
-                    img_extracted = extract_image(frame_img_path)
-                    ocr_text = img_extracted.metadata.get("ocr_text", "")
-                    ocr_status = img_extracted.metadata.get("ocr_status", "unavailable")
+            for a in audio_ev:
+                a.source = v_basename
+            curr_audio = audio_ev
 
-                    # Update entities from OCR content
-                    f_ev.entities = extract_entities(img_extracted.content)
+        audio_evidences.extend(curr_audio)
 
-                    # CRITICAL: write the actual OCR text into the frame's content and metadata
-                    # so the retrieval layer can search what was DISPLAYED ON SCREEN at this timestamp
-                    if ocr_text:
-                        t = f_ev.timestamp
-                        src = f_ev.source
-                        f_ev.content = (
-                            f"Screen content at {t:.1f}s in {src}:\n{ocr_text}"
-                        )
-                    # Always persist OCR metadata on the frame node
-                    f_ev.metadata["ocr_text"] = ocr_text
-                    f_ev.metadata["ocr_status"] = ocr_status
-                else:
-                    f_ev.entities = extract_entities(f_ev.content)
-                    f_ev.metadata["ocr_text"] = ""
-                    f_ev.metadata["ocr_status"] = "no_image"
+        curr_frames = extract_video_evidence(
+            video_path,
+            output_dir=os.path.join(processed_dir, "frames"),
+            interval_seconds=5
+        )
+        
+        for f_ev in curr_frames:
+            frame_img_path = f_ev.metadata.get("frame_path")
+            if frame_img_path and os.path.exists(frame_img_path):
+                img_extracted = extract_image(frame_img_path)
+                ocr_text = img_extracted.metadata.get("ocr_text", "")
+                ocr_status = img_extracted.metadata.get("ocr_status", "unavailable")
 
-            frame_evidences.extend(curr_frames)
+                # Update entities from OCR content
+                f_ev.entities = extract_entities(img_extracted.content)
 
-    elif os.path.exists(os.path.join(processed_dir, "transcript.json")):
-        print(f"\n[1/4] Loading existing transcript from {processed_dir}/transcript.json...")
-        transcript = load_transcript(os.path.join(processed_dir, "transcript.json"))
-        for i, segment in enumerate(transcript):
-            audio_evidences.append(Evidence(
-                id=f"meeting_audio_{i}",
-                content=segment["text"],
-                modality="audio",
-                source="meeting.mp4",
-                timestamp=segment["start"],
-                entities=extract_entities(segment["text"]),
-                confidence=0.95,
-                relationships=[],
-                metadata={"start": segment["start"], "end": segment["end"]}
-            ))
+                # CRITICAL: write the actual OCR text into the frame's content and metadata
+                # so the retrieval layer can search what was DISPLAYED ON SCREEN at this timestamp
+                if ocr_text:
+                    t = f_ev.timestamp
+                    src = f_ev.source
+                    f_ev.content = (
+                        f"Screen content at {t:.1f}s in {src}:\n{ocr_text}"
+                    )
+                # Always persist OCR metadata on the frame node
+                f_ev.metadata["ocr_text"] = ocr_text
+                f_ev.metadata["ocr_status"] = ocr_status
+            else:
+                f_ev.entities = extract_entities(f_ev.content)
+                f_ev.metadata["ocr_text"] = ""
+                f_ev.metadata["ocr_status"] = "no_image"
+
+        frame_evidences.extend(curr_frames)
 
     # 2. Ingest PDFs
     pdf_candidates = glob.glob(os.path.join(data_dir, "*.pdf")) + glob.glob(os.path.join(data_dir, "raw", "*.pdf"))
@@ -254,8 +242,16 @@ def ingest_all(
     # 4. Build Relationships (Temporal + Entity Cross-Modal)
     print("\n[4/4] Building Cross-Modal & Temporal Relationships...")
     build_temporal_relationships(audio_evidences, frame_evidences, window_seconds=6.0)
-    
-    all_evidences = audio_evidences + frame_evidences + pdf_evidences + image_evidences
+
+    # Sort video evidence by source and timestamp so all nodes for a video (audio + frames) are chronologically grouped
+    media_evidences = audio_evidences + frame_evidences
+    media_evidences.sort(key=lambda x: (x.source, x.timestamp if x.timestamp is not None else 0.0, x.modality))
+
+    # PDFs sorted by page, images by ID
+    pdf_evidences.sort(key=lambda x: (x.source, x.page if x.page is not None else 0))
+    image_evidences.sort(key=lambda x: x.id)
+
+    all_evidences = media_evidences + pdf_evidences + image_evidences
     build_entity_relationships(all_evidences)
 
     # 5. Persist Unified Evidence JSON
