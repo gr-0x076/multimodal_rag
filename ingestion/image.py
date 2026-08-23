@@ -7,19 +7,28 @@ from knowledge.schema import Evidence
 
 
 def _configure_tesseract():
-    """Attempt to locate tesseract executable if not already in system PATH."""
-    if shutil.which("tesseract"):
+    """Attempt to locate tesseract executable if not already configured or in system PATH."""
+    import shutil as _shutil
+    # If already on PATH, nothing to do
+    if _shutil.which("tesseract"):
         return
-    
-    # Common Windows installation locations
+
+    # Common Windows installation locations (try in order)
     common_paths = [
         r"C:\Program Files\Tesseract-OCR\tesseract.exe",
         r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe")
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Tesseract-OCR\tesseract.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\UB-Mannheim.TesseractOCR_Microsoft.Winget.Source_8wekyb3d8bbwe\tesseract.exe"),
+        os.path.expandvars(r"%APPDATA%\Tesseract-OCR\tesseract.exe"),
+        r"C:\Tesseract-OCR\tesseract.exe",
     ]
     for path in common_paths:
         if os.path.exists(path):
             pytesseract.pytesseract.tesseract_cmd = path
+            # Also add dir to PATH so sub-processes can find tessdata
+            tess_dir = os.path.dirname(path)
+            if tess_dir not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = tess_dir + os.pathsep + os.environ.get("PATH", "")
             return
 
 

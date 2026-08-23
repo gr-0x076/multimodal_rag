@@ -30,31 +30,75 @@ from knowledge.schema import Evidence
 
 
 def extract_entities(text: str) -> List[str]:
-    """Extract key technical terms or capitalized words as entities, excluding system boilerplate."""
-    known_keywords = {
-        "redis", "caching", "database", "sql", "nosql", "python", "api",
-        "contextmesh", "multimodal", "rag", "architecture", "system",
-        "latency", "load", "server", "cluster", "node", "index", "vector"
+    """Extract meaningful technical terms and proper nouns, excluding English stopwords and system boilerplate."""
+    # Technical domain keywords — always include when found
+    tech_keywords = {
+        "redis", "caching", "cache", "database", "sql", "nosql", "python", "api",
+        "contextmesh", "multimodal", "rag", "architecture", "system", "function",
+        "latency", "load", "server", "cluster", "node", "index", "vector",
+        "def", "class", "return", "import", "loop", "recursion", "algorithm",
+        "variable", "parameter", "argument", "indentation", "keyword", "syntax",
+        "print", "statement", "method", "object", "list", "dict", "tuple",
+        "machine", "learning", "neural", "network", "model", "training", "data",
+        "code", "program", "script", "module", "library", "package", "pip",
     }
+
+    # System/OCR boilerplate — always exclude
     boilerplate = {
-        "image", "jpeg", "jpg", "png", "ocr", "path", "readme", "see",
+        "image", "jpeg", "jpg", "png", "ocr", "path", "readme",
         "dimensions", "format", "unavailable", "detected", "extracted",
-        "video", "frame", "file", "text", "information"
+        "video", "frame", "file", "information",
     }
+
+    # Common English stopwords and filler words (sentence starters, articles, conjunctions etc.)
+    stopwords = {
+        "the", "a", "an", "and", "or", "but", "if", "in", "on", "at", "to",
+        "for", "of", "with", "by", "from", "is", "are", "was", "were", "be",
+        "been", "being", "have", "has", "had", "do", "does", "did", "will",
+        "would", "could", "should", "may", "might", "shall", "can", "need",
+        "this", "that", "these", "those", "it", "its", "we", "our", "you",
+        "your", "he", "she", "they", "them", "his", "her", "their", "my",
+        "i", "me", "us", "who", "which", "what", "where", "when", "how",
+        "why", "so", "as", "not", "no", "yes", "all", "any", "each", "every",
+        "both", "few", "more", "most", "other", "some", "such", "than", "then",
+        "there", "here", "now", "just", "also", "only", "very", "still",
+        "about", "after", "again", "also", "because", "before", "between",
+        "during", "into", "like", "over", "same", "see", "since", "through",
+        "under", "until", "up", "use", "using", "used", "say", "said", "know",
+        "think", "look", "want", "give", "go", "come", "make", "take", "get",
+        "let", "put", "out", "down", "off", "away", "back", "even", "well",
+        "way", "lot", "thing", "things", "time", "today", "new", "one", "two",
+        "three", "first", "second", "next", "last", "right", "left", "good",
+        "big", "little", "old", "long", "great", "small", "own", "part",
+        "place", "case", "point", "number", "group", "problem", "example",
+        # Sentence-starter capitals that are not proper nouns
+        "now", "look", "the", "and", "but", "so", "here", "let", "see",
+    }
+
     found = set()
-    words = re.findall(r'\b[A-Za-z0-9_-]+\b', text)
+    words = re.findall(r'\b[A-Za-z][A-Za-z0-9_-]*\b', text)
+
     for word in words:
         w_lower = word.lower()
-        if w_lower in boilerplate:
+
+        # Skip boilerplate and stopwords
+        if w_lower in boilerplate or w_lower in stopwords:
             continue
-        if w_lower in known_keywords:
-            if w_lower in ["redis", "sql", "nosql", "api", "rag", "python"]:
-                found.add(w_lower.capitalize() if w_lower != "redis" else "Redis")
-            else:
-                found.add(word.lower())
-        elif word[0].isupper() and len(word) > 2 and w_lower not in {"today", "we're", "going", "there", "this", "that", "what", "with", "have", "from", "video"}:
+
+        # Always include known tech keywords (normalised)
+        if w_lower in tech_keywords:
+            # Preserve capitalisation for well-known proper tech names
+            caps_map = {"redis": "Redis", "python": "Python", "sql": "SQL",
+                        "nosql": "NoSQL", "api": "API", "rag": "RAG", "def": "def"}
+            found.add(caps_map.get(w_lower, w_lower))
+            continue
+
+        # Include single-word proper nouns (capitalised, length > 2, not all-caps abbreviations)
+        if word[0].isupper() and len(word) > 2 and not word.isupper():
             found.add(word)
+
     return sorted(list(found))
+
 
 
 def transcribe_video(
