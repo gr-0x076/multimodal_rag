@@ -113,11 +113,13 @@ def build_entity_relationships(all_evidences: List[Evidence]) -> None:
 
 def ingest_all(
     data_dir: str = "data",
-    processed_dir: str = "data/processed"
+    processed_dir: str = "data/processed",
+    test_data_dir: str = "test_data"
 ) -> List[Evidence]:
     """
     Runs unified multimodal ingestion over videos, audio, PDFs, and images.
-    Outputs unified evidence to data/processed/evidence.json.
+    Scans test_data/, data/raw/, and data/ for input files.
+    Outputs unified evidence graph to data/processed/evidence.json.
     """
     os.makedirs(processed_dir, exist_ok=True)
     all_evidences: List[Evidence] = []
@@ -126,23 +128,50 @@ def ingest_all(
     pdf_evidences: List[Evidence] = []
     image_evidences: List[Evidence] = []
 
-    # 1. Ingest Video & Audio
-    all_mp4s = list(dict.fromkeys(
-        glob.glob(os.path.join(data_dir, "raw", "*.mp4")) + glob.glob(os.path.join(data_dir, "*.mp4"))
-    ))
+    # 1. Discover Video & Audio files across test_data/, data/raw/, and data/
+    video_patterns = [
+        os.path.join(test_data_dir, "*.mp4"),
+        os.path.join(test_data_dir, "**", "*.mp4"),
+        os.path.join(data_dir, "raw", "*.mp4"),
+        os.path.join(data_dir, "*.mp4"),
+    ]
+    raw_mp4s = []
+    for pat in video_patterns:
+        raw_mp4s.extend(glob.glob(pat, recursive=True))
+
+    # Normalize paths and deduplicate by realpath / filename
+    seen_mp4_keys = set()
+    all_mp4s = []
+    for v in raw_mp4s:
+        abs_v = os.path.abspath(v)
+        bname = os.path.basename(v).lower()
+        if abs_v not in seen_mp4_keys:
+            seen_mp4_keys.add(abs_v)
+            all_mp4s.append(v)
+
+    # De-conflict meeting.mp4 vs meeting_audio.mp4 if both exist
     if any(os.path.basename(v).lower() == "meeting.mp4" for v in all_mp4s):
         meeting_variants = [v for v in all_mp4s if os.path.basename(v).lower() in ("meeting.mp4", "meeting_audio.mp4")]
         if len(meeting_variants) > 1:
             canonical_meeting = next((v for v in meeting_variants if os.path.basename(v).lower() == "meeting.mp4"), meeting_variants[0])
             all_mp4s = [v for v in all_mp4s if v not in meeting_variants] + [canonical_meeting]
 
-    print(f"\n[1/4] Ingesting {len(all_mp4s)} Video & Audio file(s)...")
+    print(f"\n=======================================================")
+    print(f" ContextMesh Multimodal Ingestion Pipeline")
+    print(f"=======================================================")
+    print(f"Discovered {len(all_mp4s)} Video & Audio file(s):")
+    for v in all_mp4s:
+        print(f"  • {v}")
+
+    print(f"\n[1/4] Ingesting Video & Audio...")
     for video_path in all_mp4s:
         v_basename = os.path.basename(video_path)
         v_stem = Path(v_basename).stem.lower()
-        print(f"  - Processing Video & Audio: {video_path}")
+        print(f"\n  - Processing Video: {video_path}")
 
+        # Check for pre-existing custom transcript file or run Whisper audio pipeline
         custom_transcript_candidates = [
+            os.path.join(test_data_dir, f"{v_stem}_transcript.json"),
             os.path.join(data_dir, f"{v_stem}_transcript.json"),
             os.path.join(data_dir, "raw", f"{v_stem}_transcript.json"),
             os.path.join(processed_dir, f"{v_stem}_transcript.json"),
@@ -151,7 +180,7 @@ def ingest_all(
         curr_audio = []
         for custom_p in custom_transcript_candidates:
             if os.path.exists(custom_p):
-                print(f"    - Loading transcript: {custom_p}")
+                print(f"    - Loading transcript file: {custom_p}")
                 transcript = load_transcript(custom_p)
                 for i, segment in enumerate(transcript):
                     curr_audio.append(Evidence(
@@ -163,28 +192,35 @@ def ingest_all(
                         entities=extract_entities(segment["text"]),
                         confidence=0.95,
                         relationships=[],
-                        metadata={"start": segment["start"], "end": segment["end"], "duration": segment.get("end", 0) - segment.get("start", 0)}
+                        metadata={"start": segment["start"], "end": segment.get("end", segment["start"]), "duration": segment.get("end", 0) - segment.get("start", 0)}
                     ))
                 loaded_custom = True
                 break
 
         if not loaded_custom:
-            audio_ev = extract_audio_evidence(
-                video_path,
-                output_transcript_path=os.path.join(processed_dir, f"{v_stem}_transcript.json")
-            )
-            for a in audio_ev:
-                a.source = v_basename
-            curr_audio = audio_ev
+            print("    - Extracting audio & transcribing speech (Whisper)...")
+            try:
+                audio_ev = extract_audio_evidence(
+                    video_path,
+                    output_transcript_path=os.path.join(processed_dir, f"{v_stem}_transcript.json")
+                )
+                for a in audio_ev:
+                    a.source = v_basename
+                curr_audio = audio_ev
+                print(f"    - Speech Transcribed: {len(curr_audio)} audio evidence segment(s)")
+            except Exception as e:
+                print(f"    Notice during audio extraction for {v_basename}: {e}")
+                curr_audio = []
 
         audio_evidences.extend(curr_audio)
 
+        print("    - Extracting video keyframes & performing OCR (5s interval)...")
         curr_frames = extract_video_evidence(
             video_path,
             output_dir=os.path.join(processed_dir, "frames"),
             interval_seconds=5
         )
-        
+
         for f_ev in curr_frames:
             frame_img_path = f_ev.metadata.get("frame_path")
             if frame_img_path and os.path.exists(frame_img_path):
@@ -195,15 +231,12 @@ def ingest_all(
                 # Update entities from OCR content
                 f_ev.entities = extract_entities(img_extracted.content)
 
-                # CRITICAL: write the actual OCR text into the frame's content and metadata
-                # so the retrieval layer can search what was DISPLAYED ON SCREEN at this timestamp
                 if ocr_text:
                     t = f_ev.timestamp
                     src = f_ev.source
                     f_ev.content = (
                         f"Screen content at {t:.1f}s in {src}:\n{ocr_text}"
                     )
-                # Always persist OCR metadata on the frame node
                 f_ev.metadata["ocr_text"] = ocr_text
                 f_ev.metadata["ocr_status"] = ocr_status
             else:
@@ -211,10 +244,15 @@ def ingest_all(
                 f_ev.metadata["ocr_text"] = ""
                 f_ev.metadata["ocr_status"] = "no_image"
 
+        print(f"    - Frames Extracted: {len(curr_frames)} keyframe evidence node(s)")
         frame_evidences.extend(curr_frames)
 
     # 2. Ingest PDFs
-    pdf_candidates = glob.glob(os.path.join(data_dir, "*.pdf")) + glob.glob(os.path.join(data_dir, "raw", "*.pdf"))
+    pdf_candidates = list(dict.fromkeys(
+        glob.glob(os.path.join(test_data_dir, "*.pdf")) +
+        glob.glob(os.path.join(data_dir, "*.pdf")) +
+        glob.glob(os.path.join(data_dir, "raw", "*.pdf"))
+    ))
     print(f"\n[2/4] Ingesting PDFs: {len(pdf_candidates)} found.")
     for pdf_file in pdf_candidates:
         print(f"  - Processing PDF: {pdf_file}")
@@ -227,11 +265,12 @@ def ingest_all(
     image_extensions = ("*.png", "*.jpg", "*.jpeg", "*.webp")
     image_candidates = []
     for ext in image_extensions:
+        image_candidates.extend(glob.glob(os.path.join(test_data_dir, ext)))
         image_candidates.extend(glob.glob(os.path.join(data_dir, ext)))
         image_candidates.extend(glob.glob(os.path.join(data_dir, "raw", ext)))
 
     # Exclude extracted video frames from standalone image scan
-    image_candidates = [img for img in image_candidates if "frames" not in img]
+    image_candidates = [img for img in list(dict.fromkeys(image_candidates)) if "frames" not in img]
     print(f"\n[3/4] Ingesting Standalone Images: {len(image_candidates)} found.")
     for img_file in image_candidates:
         print(f"  - Processing Image: {img_file}")
@@ -240,7 +279,7 @@ def ingest_all(
         image_evidences.append(ev)
 
     # 4. Build Relationships (Temporal + Entity Cross-Modal)
-    print("\n[4/4] Building Cross-Modal & Temporal Relationships...")
+    print("\n[4/4] Building Cross-Modal & Temporal Relationship Graph...")
     build_temporal_relationships(audio_evidences, frame_evidences, window_seconds=6.0)
 
     # Sort video evidence by source and timestamp so all nodes for a video (audio + frames) are chronologically grouped
@@ -260,15 +299,15 @@ def ingest_all(
     with open(evidence_output_path, "w", encoding="utf-8") as f:
         json.dump(serialized_evidence, f, indent=2, ensure_ascii=False)
 
-    print(f"\n" + "=" * 55)
-    print(f" Unified Ingestion Summary:")
+    print(f"\n=======================================================")
+    print(f" Unified Ingestion Complete Summary:")
     print(f"   Audio Segments : {len(audio_evidences)}")
     print(f"   Video Frames   : {len(frame_evidences)}")
     print(f"   PDF Pages      : {len(pdf_evidences)}")
     print(f"   Images         : {len(image_evidences)}")
     print(f"   Total Evidence : {len(all_evidences)}")
     print(f" Saved unified evidence graph to: {evidence_output_path}")
-    print("=" * 55)
+    print("=======================================================\n")
 
     return all_evidences
 
@@ -276,55 +315,28 @@ def ingest_all(
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="ContextMesh Multimodal Ingestion Pipeline")
-    parser.add_argument("--video", type=str, default=None, help="Path to single video for single-video ingestion validation")
+    parser.add_argument("video_pos", type=str, nargs="?", default=None, help="Path to input video file or folder")
+    parser.add_argument("--video", "--input", "--data", type=str, default=None, help="Path to input video file or folder")
+    parser.add_argument("--reset", action="store_true", help="Reset generated data/processed before ingestion")
     args = parser.parse_args()
 
-    if args.video:
-        if not os.path.exists(args.video):
-            print(f"Error: Video file not found at {args.video}")
-            sys.exit(1)
-        v_basename = os.path.basename(args.video)
-        v_stem = os.path.splitext(v_basename)[0]
-        proc_dir = "data/processed"
-        os.makedirs(proc_dir, exist_ok=True)
-        
-        print(f"\n=======================================================")
-        print(f" Single-Video Ingestion Validation: {args.video}")
-        print(f"=======================================================")
-        
-        # Audio
-        audio_ev = extract_audio_evidence(args.video, output_transcript_path=os.path.join(proc_dir, f"{v_stem}_transcript.json"))
-        # Video frames
-        frame_ev = extract_video_evidence(args.video, output_dir=os.path.join(proc_dir, "frames"), interval_seconds=5)
-        for f in frame_ev:
-            frame_img_path = f.metadata.get("frame_path")
-            if frame_img_path and os.path.exists(frame_img_path):
-                img_ex = extract_image(frame_img_path)
-                f.entities = extract_entities(img_ex.content)
+    if args.reset:
+        from pipeline.reset import reset_processed_data
+        reset_processed_data(verbose=True)
 
-        build_temporal_relationships(audio_ev, frame_ev, window_seconds=6.0)
-        combined = audio_ev + frame_ev
-        build_entity_relationships(combined)
-
-        print(f"\nINGESTION DEBUG SUMMARY FOR: {v_basename}")
-        print(f"  VIDEO SOURCE         : {args.video}")
-        print(f"  AUDIO SEGMENTS       : {len(audio_ev)}")
-        print(f"  FRAMES EXTRACTED     : {len(frame_ev)}")
-        print(f"  TOTAL EVIDENCE NODES : {len(combined)}")
-        print(f"  RELATIONSHIPS BUILT  : {sum(len(e.relationships) for e in combined)}")
-        
-        if audio_ev:
-            print("\nSample Audio Evidence Items:")
-            for a in audio_ev[:3]:
-                print(f"  - [{a.id}] ({a.timestamp:.1f}s): \"{a.content}\" | Entities: {a.entities}")
+    target_path = args.video or args.video_pos
+    if target_path:
+        if os.path.isdir(target_path):
+            ingest_all(test_data_dir=target_path)
+        elif os.path.isfile(target_path):
+            v_basename = os.path.basename(target_path)
+            v_stem = os.path.splitext(v_basename)[0]
+            proc_dir = "data/processed"
+            os.makedirs(proc_dir, exist_ok=True)
+            v_dir = os.path.dirname(target_path) or "test_data"
+            ingest_all(test_data_dir=v_dir)
         else:
-            print("\n  Notice: No speech audio segments transcribed for this video.")
-
-        if frame_ev:
-            print("\nSample Video Frame Evidence Items:")
-            for f in frame_ev[:3]:
-                print(f"  - [{f.id}] ({f.timestamp:.1f}s): {f.metadata.get('frame_path')} | Entities: {f.entities}")
-
-        print(f"=======================================================\n")
+            print(f"Error: Specified path not found: {target_path}")
+            sys.exit(1)
     else:
         ingest_all()

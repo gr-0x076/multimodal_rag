@@ -579,19 +579,27 @@ def run_streamlit_app():
         st.markdown("## 🧠 ContextMesh")
         st.caption("Multimodal Evidence Explorer")
         st.markdown("---")
-        st.markdown("### ⚙️ Pipeline")
+        st.markdown("### ⚙️ Pipeline Controls")
         st.write(f"**Evidence Nodes:** {stats['total']}")
         st.write(f"**Sources:** {len(stats['sources'])}")
         for src in stats["sources"]:
             st.caption(f"  📁 {src}")
-        st.markdown("---")
-        if st.button("🔄 Re-run Ingestion"):
-            with st.spinner("Processing all media…"):
-                ingest_all(
-                    data_dir=os.path.join(root_dir, "data"),
-                    processed_dir=os.path.join(root_dir, "data", "processed")
-                )
+        st.markdown("")
+        col_s1, col_s2 = st.columns(2)
+        with col_s1:
+            if st.button("🧹 Reset Data"):
+                from pipeline.reset import reset_processed_data
+                reset_processed_data(verbose=False)
                 st.rerun()
+        with col_s2:
+            if st.button("🔄 Ingest"):
+                with st.spinner("Processing media…"):
+                    ingest_all(
+                        data_dir=os.path.join(root_dir, "data"),
+                        processed_dir=os.path.join(root_dir, "data", "processed"),
+                        test_data_dir=os.path.join(root_dir, "test_data")
+                    )
+                    st.rerun()
         st.markdown("---")
         st.markdown("### 🔑 Groq API Key")
         custom_key = st.text_input("Override key (optional)", type="password")
@@ -615,10 +623,12 @@ def run_streamlit_app():
     video_chk = "✓" if stats["video_frame"] > 0 else "✗"
     pdf_chk   = "✓" if stats["pdf"] > 0 else "✗"
     img_chk   = "✓" if stats["image"] > 0 else "✗"
+    srcs_str  = ", ".join(stats["sources"][:2]) if stats["sources"] else "None"
 
     st.markdown(f"""
     <div class="cm-status-bar">
         <span class="cm-status-item">{ready_dot} <strong>{ready_text}</strong></span>
+        <span class="cm-status-item">📁 <strong>{srcs_str}</strong></span>
         <span class="cm-status-item">📦 <strong>{stats['total']}</strong> nodes</span>
         <span class="cm-status-item">🎙️ Audio {audio_chk}</span>
         <span class="cm-status-item">🎥 Video {video_chk}</span>
@@ -629,17 +639,34 @@ def run_streamlit_app():
     """, unsafe_allow_html=True)
 
     # ── Query box ─────────────────────────────────────────────────────────────
-    st.markdown('<div class="cm-query-label">🔍 Ask anything about your content</div>', unsafe_allow_html=True)
+    st.markdown('<div class="cm-query-label">🔍 Ask anything about your video content</div>', unsafe_allow_html=True)
 
-    # Quick demo chip buttons
-    QUICK_QUERIES = [
-        ("🎯 Redis Architecture",       "What architecture was proposed to reduce database load?"),
-        ("⚡ Peak Bottleneck",           "What was the primary bottleneck during peak traffic?"),
-        ("🐍 Python Functions",          "What was being explained about Python functions in the video?"),
-        ("💡 Why Reuse Code?",           "Why did the speaker say we need to reuse code?"),
-        ("🖥️ What was on screen?",      "What code was displayed on the screen?"),
-        ("🛑 Unsupported Query",         "What machine-learning algorithm was used to train Redis caching?"),
-    ]
+    # Dynamic Quick demo chip buttons based on active ingested sources
+    active_sources_lower = [s.lower() for s in stats.get("sources", [])]
+    if any("my_test" in s or "function" in s or "python" in s for s in active_sources_lower):
+        QUICK_QUERIES = [
+            ("🐍 Python Topic",       "What topic was being taught in the video?"),
+            ("💡 Why Functions?",     "Why did the speaker say functions are important?"),
+            ("🔑 Keyword Used",        "What keyword is used to define a function in Python?"),
+            ("🖥️ Code on Screen",     "What code was displayed on the screen at the beginning?"),
+            ("🛑 Refusal Test",       "What machine-learning algorithm was used to train caching?"),
+        ]
+    elif any("meeting" in s or "redis" in s for s in active_sources_lower):
+        QUICK_QUERIES = [
+            ("🎯 Redis Architecture", "What architecture was proposed to reduce database load?"),
+            ("⚡ Peak Bottleneck",     "What was the primary bottleneck during peak traffic?"),
+            ("📄 Caching Layer",      "What specification was provided for the caching layer?"),
+            ("🖥️ Architecture Slide", "What diagram was shown on screen at 10 seconds?"),
+            ("🛑 Refusal Test",       "What machine-learning algorithm was used to train caching?"),
+        ]
+    else:
+        QUICK_QUERIES = [
+            ("📺 Video Topic",        "What was being explained in this video?"),
+            ("🗣️ Spoken Content",    "What did the speaker say in the video?"),
+            ("🖥️ Visual Screen",     "What was displayed on screen in the video?"),
+            ("💡 Key Takeaways",      "What main concept or solution was discussed?"),
+            ("🛑 Refusal Test",       "What machine-learning algorithm was used to train caching?"),
+        ]
 
     if "preset_query" not in st.session_state:
         st.session_state["preset_query"] = ""
@@ -648,6 +675,7 @@ def run_streamlit_app():
     chip_cols = st.columns(len(QUICK_QUERIES))
     for i, (label, qtext) in enumerate(QUICK_QUERIES):
         with chip_cols[i]:
+
             if st.button(label, key=f"chip_{i}"):
                 st.session_state["preset_query"] = qtext
                 st.rerun()

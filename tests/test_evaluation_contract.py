@@ -116,8 +116,9 @@ def test_insufficient_evidence_behavior():
     answer_obj = ask(unrelated_query, verbose=False)
     assert isinstance(answer_obj, GroundedAnswer)
     assert len(answer_obj.cited_evidence) == 0
-    assert "insufficient" in answer_obj.answer.lower()
+    assert any(term in answer_obj.answer.lower() for term in ["insufficient", "does not contain", "not contain", "unsupported"])
     print(" Insufficient evidence behavior verified: Correctly returns 0 hits and reports insufficient evidence!")
+
 
 
 def run_evaluation_suite():

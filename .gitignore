@@ -32,3 +32,6 @@ data/processed/*
 !data/.gitkeep
 !data/architecture.pdf
 !data/diagram.png
+test_data/*
+!test_data/README.md
+
