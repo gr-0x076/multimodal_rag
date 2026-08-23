@@ -185,10 +185,28 @@ def ingest_all(
                 frame_img_path = f_ev.metadata.get("frame_path")
                 if frame_img_path and os.path.exists(frame_img_path):
                     img_extracted = extract_image(frame_img_path)
+                    ocr_text = img_extracted.metadata.get("ocr_text", "")
+                    ocr_status = img_extracted.metadata.get("ocr_status", "unavailable")
+
+                    # Update entities from OCR content
                     f_ev.entities = extract_entities(img_extracted.content)
+
+                    # CRITICAL: write the actual OCR text into the frame's content and metadata
+                    # so the retrieval layer can search what was DISPLAYED ON SCREEN at this timestamp
+                    if ocr_text:
+                        t = f_ev.timestamp
+                        src = f_ev.source
+                        f_ev.content = (
+                            f"Screen content at {t:.1f}s in {src}:\n{ocr_text}"
+                        )
+                    # Always persist OCR metadata on the frame node
+                    f_ev.metadata["ocr_text"] = ocr_text
+                    f_ev.metadata["ocr_status"] = ocr_status
                 else:
                     f_ev.entities = extract_entities(f_ev.content)
-            
+                    f_ev.metadata["ocr_text"] = ""
+                    f_ev.metadata["ocr_status"] = "no_image"
+
             frame_evidences.extend(curr_frames)
 
     elif os.path.exists(os.path.join(processed_dir, "transcript.json")):
