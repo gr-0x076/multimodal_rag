@@ -118,7 +118,8 @@ def ingest_all(
 ) -> List[Evidence]:
     """
     Runs unified multimodal ingestion over videos, audio, PDFs, and images.
-    Scans test_data/, data/raw/, and data/ for input files.
+    If test_data/ contains input files, ingests ONLY the target inputs in test_data/
+    to keep evidence.json 100% clean and isolated for demo runs.
     Outputs unified evidence graph to data/processed/evidence.json.
     """
     os.makedirs(processed_dir, exist_ok=True)
@@ -128,23 +129,28 @@ def ingest_all(
     pdf_evidences: List[Evidence] = []
     image_evidences: List[Evidence] = []
 
-    # 1. Discover Video & Audio files across test_data/, data/raw/, and data/
-    video_patterns = [
-        os.path.join(test_data_dir, "*.mp4"),
-        os.path.join(test_data_dir, "**", "*.mp4"),
-        os.path.join(data_dir, "raw", "*.mp4"),
-        os.path.join(data_dir, "*.mp4"),
-    ]
-    raw_mp4s = []
-    for pat in video_patterns:
-        raw_mp4s.extend(glob.glob(pat, recursive=True))
+    # Discover Video & Audio files (Prioritize test_data/ if populated)
+    test_data_mp4s = list(dict.fromkeys(
+        glob.glob(os.path.join(test_data_dir, "*.mp4"), recursive=True) +
+        glob.glob(os.path.join(test_data_dir, "**", "*.mp4"), recursive=True)
+    ))
 
-    # Normalize paths and deduplicate by realpath / filename
+    if test_data_mp4s:
+        raw_mp4s = test_data_mp4s
+    else:
+        video_patterns = [
+            os.path.join(data_dir, "raw", "*.mp4"),
+            os.path.join(data_dir, "*.mp4"),
+        ]
+        raw_mp4s = []
+        for pat in video_patterns:
+            raw_mp4s.extend(glob.glob(pat, recursive=True))
+
+    # Deduplicate by realpath / filename
     seen_mp4_keys = set()
     all_mp4s = []
     for v in raw_mp4s:
         abs_v = os.path.abspath(v)
-        bname = os.path.basename(v).lower()
         if abs_v not in seen_mp4_keys:
             seen_mp4_keys.add(abs_v)
             all_mp4s.append(v)
@@ -247,12 +253,15 @@ def ingest_all(
         print(f"    - Frames Extracted: {len(curr_frames)} keyframe evidence node(s)")
         frame_evidences.extend(curr_frames)
 
-    # 2. Ingest PDFs
-    pdf_candidates = list(dict.fromkeys(
-        glob.glob(os.path.join(test_data_dir, "*.pdf")) +
-        glob.glob(os.path.join(data_dir, "*.pdf")) +
-        glob.glob(os.path.join(data_dir, "raw", "*.pdf"))
-    ))
+    # 2. Ingest PDFs (Scoped to active input context)
+    if test_data_mp4s:
+        pdf_candidates = glob.glob(os.path.join(test_data_dir, "*.pdf"))
+    else:
+        pdf_candidates = list(dict.fromkeys(
+            glob.glob(os.path.join(test_data_dir, "*.pdf")) +
+            glob.glob(os.path.join(data_dir, "*.pdf")) +
+            glob.glob(os.path.join(data_dir, "raw", "*.pdf"))
+        ))
     print(f"\n[2/4] Ingesting PDFs: {len(pdf_candidates)} found.")
     for pdf_file in pdf_candidates:
         print(f"  - Processing PDF: {pdf_file}")
@@ -261,13 +270,17 @@ def ingest_all(
             ev.entities = extract_entities(ev.content)
         pdf_evidences.extend(extracted)
 
-    # 3. Ingest Images / Diagrams
+    # 3. Ingest Images / Diagrams (Scoped to active input context)
     image_extensions = ("*.png", "*.jpg", "*.jpeg", "*.webp")
     image_candidates = []
-    for ext in image_extensions:
-        image_candidates.extend(glob.glob(os.path.join(test_data_dir, ext)))
-        image_candidates.extend(glob.glob(os.path.join(data_dir, ext)))
-        image_candidates.extend(glob.glob(os.path.join(data_dir, "raw", ext)))
+    if test_data_mp4s:
+        for ext in image_extensions:
+            image_candidates.extend(glob.glob(os.path.join(test_data_dir, ext)))
+    else:
+        for ext in image_extensions:
+            image_candidates.extend(glob.glob(os.path.join(test_data_dir, ext)))
+            image_candidates.extend(glob.glob(os.path.join(data_dir, ext)))
+            image_candidates.extend(glob.glob(os.path.join(data_dir, "raw", ext)))
 
     # Exclude extracted video frames from standalone image scan
     image_candidates = [img for img in list(dict.fromkeys(image_candidates)) if "frames" not in img]
